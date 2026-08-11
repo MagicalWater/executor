@@ -174,7 +174,6 @@ const useConnection = (
       try: () =>
         connection.client.callTool({ name: toolName, arguments: args }, undefined, {
           timeout: MCP_TOOL_CALL_TIMEOUT_MS,
-          maxTotalTimeout: MCP_TOOL_CALL_TIMEOUT_MS,
         }),
       catch: (cause) => {
         if (Predicate.isTagged(cause, "McpOAuthReauthorizationRequired")) {

@@ -163,7 +163,6 @@ describe("invokeMcpTool", () => {
 
       expect(requestOptions).toEqual({
         timeout: 10 * 60 * 1_000,
-        maxTotalTimeout: 10 * 60 * 1_000,
       });
     }),
   );
