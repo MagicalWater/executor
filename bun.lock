@@ -1213,6 +1213,7 @@
     "@1password/sdk-core@0.4.1-beta.1": "patches/@1password%2Fsdk-core@0.4.1-beta.1.patch",
     "agents@0.17.3": "patches/agents@0.17.3.patch",
     "postgres@3.4.9": "patches/postgres@3.4.9.patch",
+    "@modelcontextprotocol/sdk@1.29.0": "patches/@modelcontextprotocol%2Fsdk@1.29.0.patch",
   },
   "catalog": {
     "@effect/atom-react": "4.0.0-beta.59",

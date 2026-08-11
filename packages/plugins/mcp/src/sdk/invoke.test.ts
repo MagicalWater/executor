@@ -137,35 +137,6 @@ const invocationRejectionCases = [
 ];
 
 describe("invokeMcpTool", () => {
-  it.effect("uses a bounded ten-minute request budget for downstream MCP tool calls", () =>
-    Effect.gen(function* () {
-      let requestOptions: unknown;
-      const connector: McpConnector = Effect.succeed({
-        // oxlint-disable-next-line executor/no-double-cast -- boundary: minimal fake MCP client captures request options for invocation contract verification
-        client: {
-          setRequestHandler: () => undefined,
-          callTool: (_request: unknown, _resultSchema: unknown, options: unknown) => {
-            requestOptions = options;
-            return Promise.resolve({ content: [] });
-          },
-        } as unknown as McpConnection["client"],
-        close: () => Promise.resolve(),
-      });
-
-      yield* invokeMcpTool({
-        toolId: "slow_tool",
-        toolName: "slow_tool",
-        args: {},
-        transport: "stdio",
-        connector,
-        elicit: acceptAll,
-      });
-
-      expect(requestOptions).toEqual({
-        timeout: 10 * 60 * 1_000,
-      });
-    }),
-  );
   for (const testCase of invocationRejectionCases) {
     it.effect(testCase.name, () =>
       Effect.gen(function* () {

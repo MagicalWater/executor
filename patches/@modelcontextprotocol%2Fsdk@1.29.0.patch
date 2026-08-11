@@ -1,0 +1,26 @@
+diff --git a/dist/cjs/client/index.js b/dist/cjs/client/index.js
+index 6ac1da14dc7f6211ae70f7711c124b76098816d8..4c71da8b91e7528c159a052a767b82a792e4f915 100644
+--- a/dist/cjs/client/index.js
++++ b/dist/cjs/client/index.js
+@@ -496,7 +496,7 @@ class Client extends protocol_js_1.Protocol {
+         if (this.isToolTaskRequired(params.name)) {
+             throw new types_js_1.McpError(types_js_1.ErrorCode.InvalidRequest, `Tool "${params.name}" requires task-based execution. Use client.experimental.tasks.callToolStream() instead.`);
+         }
+-        const result = await this.request({ method: 'tools/call', params }, resultSchema, options);
++        const result = await this.request({ method: 'tools/call', params }, resultSchema, options ?? { timeout: 600000 });
+         // Check if the tool has an outputSchema
+         const validator = this.getToolOutputValidator(params.name);
+         if (validator) {
+diff --git a/dist/esm/client/index.js b/dist/esm/client/index.js
+index 49b12c6cd918c457420fef7ad5528a9443d1a191..8f763a4fb391076d4a6d756c0c3ac546151e050b 100644
+--- a/dist/esm/client/index.js
++++ b/dist/esm/client/index.js
+@@ -492,7 +492,7 @@ export class Client extends Protocol {
+         if (this.isToolTaskRequired(params.name)) {
+             throw new McpError(ErrorCode.InvalidRequest, `Tool "${params.name}" requires task-based execution. Use client.experimental.tasks.callToolStream() instead.`);
+         }
+-        const result = await this.request({ method: 'tools/call', params }, resultSchema, options);
++        const result = await this.request({ method: 'tools/call', params }, resultSchema, options ?? { timeout: 600000 });
+         // Check if the tool has an outputSchema
+         const validator = this.getToolOutputValidator(params.name);
+         if (validator) {

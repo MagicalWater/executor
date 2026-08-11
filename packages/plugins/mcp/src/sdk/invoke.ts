@@ -158,8 +158,6 @@ const installToolListChangedHandler = (
 // Single tool call — install handlers, callTool, return raw result
 // ---------------------------------------------------------------------------
 
-const MCP_TOOL_CALL_TIMEOUT_MS = 10 * 60 * 1_000;
-
 const useConnection = (
   connection: McpConnection,
   toolName: string,
@@ -171,10 +169,7 @@ const useConnection = (
     installElicitationHandler(connection.client, elicit);
     installToolListChangedHandler(connection.client, onToolListChanged);
     return yield* Effect.tryPromise({
-      try: () =>
-        connection.client.callTool({ name: toolName, arguments: args }, undefined, {
-          timeout: MCP_TOOL_CALL_TIMEOUT_MS,
-        }),
+      try: () => connection.client.callTool({ name: toolName, arguments: args }),
       catch: (cause) => {
         if (Predicate.isTagged(cause, "McpOAuthReauthorizationRequired")) {
           return new McpOAuthReauthorizationRequired({
