@@ -7,9 +7,10 @@
 // @executor-js/mcporter) are consumed purely as published npm packages and
 // developed in their own standalone repos. Nothing to init here.
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+
+import { hasInstalledVitestBin } from "./bootstrap-utils";
 
 const repoRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
 
@@ -34,7 +35,7 @@ run("verify patched deps", "bun", ["run", "scripts/check-patched-deps.ts"]);
 // per-machine so this is a fast no-op when already present.
 run("playwright chromium", "bunx", ["playwright", "install", "chromium"]);
 
-if (!existsSync(resolve(repoRoot, "node_modules/.bin/vitest"))) {
+if (!hasInstalledVitestBin(repoRoot)) {
   throw new Error("bootstrap: vitest missing after install — bun install likely failed");
 }
 
