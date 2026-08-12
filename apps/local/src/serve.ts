@@ -235,6 +235,13 @@ export interface StartServerOptions {
   authToken?: string;
   /** Test hook for supplying API/MCP handlers without loading the local server graph. */
   handlers?: ServerHandlers;
+  /**
+   * Optional local daemon lifecycle hook. When present, exposes an authenticated
+   * POST /api/shutdown endpoint that asks the owning process to run its normal
+   * graceful shutdown path. The callback is queued after the 202 response is
+   * created so the daemon can close the Bun server from its own event loop.
+   */
+  onShutdownRequest?: () => void;
 }
 
 export interface ServerInstance {
@@ -403,6 +410,11 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Server
               headers: { "www-authenticate": 'Bearer realm="executor"' },
             }),
           );
+        }
+
+        if (opts.onShutdownRequest && url.pathname === "/api/shutdown" && req.method === "POST") {
+          queueMicrotask(() => opts.onShutdownRequest?.());
+          return withCors(new Response(null, { status: 202 }));
         }
 
         if (isUnauthenticatedOAuthClientMetadataPath(url.pathname) && req.method === "GET") {

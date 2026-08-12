@@ -162,6 +162,32 @@ describe("startServer bearer auth", () => {
     expect(await authorized.text()).toBe("ok");
   });
 
+  it("exposes daemon shutdown only when configured and bearer-authorized", async () => {
+    let shutdownRequests = 0;
+    server = await startServer({
+      port: 0,
+      clientDir,
+      authToken: TOKEN,
+      handlers: testHandlers(),
+      onShutdownRequest: () => {
+        shutdownRequests += 1;
+      },
+    });
+    const baseUrl = `http://127.0.0.1:${server.port}`;
+
+    const unauthorized = await fetch(`${baseUrl}/api/shutdown`, { method: "POST" });
+    expect(unauthorized.status).toBe(401);
+    expect(shutdownRequests).toBe(0);
+
+    const authorized = await fetch(`${baseUrl}/api/shutdown`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    expect(authorized.status).toBe(202);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(shutdownRequests).toBe(1);
+  });
+
   it("requires the bearer token on /mcp", async () => {
     const baseUrl = await startTestServer();
 
