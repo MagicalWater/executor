@@ -492,7 +492,7 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Server
       async stop() {
         if (stopped) return;
         stopped = true;
-        server.stop(true);
+        await server.stop(true);
         await disposeOwnedResources();
       },
     };

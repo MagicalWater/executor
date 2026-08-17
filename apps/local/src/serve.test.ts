@@ -85,6 +85,49 @@ describe("startServer static/SPA routing (unauthenticated)", () => {
 });
 
 describe("startServer startup cleanup", () => {
+  it("waits for the Bun listener to finish stopping before resolving", async () => {
+    const originalServe = Bun.serve;
+    const nativeStop = { release: null as (() => void) | null };
+    let nativeStopRequested = false;
+
+    Bun.serve = (() =>
+      ({
+        port: 4788,
+        stop: () => {
+          nativeStopRequested = true;
+          return new Promise<void>((resolve) => {
+            nativeStop.release = resolve;
+          });
+        },
+      }) as ReturnType<typeof Bun.serve>) as typeof Bun.serve;
+
+    // oxlint-disable-next-line executor/no-try-catch-or-throw -- test boundary: always restore the global Bun.serve fixture after the assertion
+    try {
+      server = await startServer({
+        port: 0,
+        hostname: "::1",
+        clientDir,
+        authToken: TOKEN,
+        handlers: testHandlers(),
+      });
+
+      let wrapperStopResolved = false;
+      const stopPromise = server.stop().then(() => {
+        wrapperStopResolved = true;
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(nativeStopRequested).toBe(true);
+      expect(wrapperStopResolved).toBe(false);
+
+      nativeStop.release?.();
+      await stopPromise;
+      server = null;
+    } finally {
+      Bun.serve = originalServe;
+    }
+  });
+
   it("releases the owned DB when a default-handler server stops", async () => {
     server = await startServer({ port: 0, clientDir, authToken: TOKEN });
     await server.stop();
