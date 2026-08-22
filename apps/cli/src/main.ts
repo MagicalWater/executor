@@ -108,15 +108,17 @@ import {
   type ServerInstance,
   type StartServerOptions,
 } from "@executor-js/local";
-import { fetchIntegrations } from "./integrations";
+import { fetchIntegrations, shouldFetchIntegrationsForCliArgs } from "./integrations";
 import {
   buildDaemonSpawnSpec,
   chooseDaemonPort,
   canAutoStartLocalDaemonForHost,
+  isDaemonPortReleased,
   isExecutorServerReachable,
   isDevCliEntrypoint,
   parseDaemonBaseUrl,
   planServiceInstall,
+  requestDaemonShutdown,
   spawnDetached,
   terminateSpawnedDetachedProcess,
   waitForReachable,
@@ -925,20 +927,47 @@ const stopDaemon = (
 
     console.log(`Stopping daemon at ${target.baseUrl} (pid ${record.pid})...`);
 
-    yield* terminatePid(record.pid);
+    const manifest = yield* readLocalServerManifest();
+    const manifestOrigin = manifest
+      ? normalizeExecutorServerConnection({ origin: manifest.connection.origin }).origin
+      : null;
+    const targetOrigin = normalizeExecutorServerConnection({ origin: target.baseUrl }).origin;
+    const authToken =
+      manifest &&
+      manifest.pid === record.pid &&
+      manifestOrigin === targetOrigin &&
+      manifest.connection.auth?.kind === "bearer"
+        ? manifest.connection.auth.token
+        : null;
 
-    const stopped = yield* waitForUnreachable({
-      check: isServerReachable(target.baseUrl),
-      timeoutMs: DAEMON_STOP_TIMEOUT_MS,
-      intervalMs: DAEMON_BOOT_POLL_MS,
-    });
+    const waitForStoppedAndReleased = () =>
+      waitForReachable({
+        check: Effect.gen(function* () {
+          if (isPidAlive(record.pid)) return false;
+          return yield* isDaemonPortReleased({ hostname: target.hostname, port: target.port }).pipe(
+            Effect.catchCause(() => Effect.succeed(false)),
+          );
+        }),
+        timeoutMs: DAEMON_STOP_TIMEOUT_MS,
+        intervalMs: DAEMON_BOOT_POLL_MS,
+      });
+
+    const gracefulRequested = authToken
+      ? yield* requestDaemonShutdown({ baseUrl: target.baseUrl, authToken })
+      : false;
+
+    let stopped = gracefulRequested ? yield* waitForStoppedAndReleased() : false;
+    if (!stopped && isPidAlive(record.pid)) {
+      yield* terminatePid(record.pid);
+      stopped = yield* waitForStoppedAndReleased();
+    }
 
     if (!stopped) {
       return yield* Effect.fail(
         new Error(
           [
-            `Daemon at ${target.baseUrl} did not stop within ${DAEMON_STOP_TIMEOUT_MS}ms.`,
-            "Try terminating the process manually.",
+            `Daemon at ${target.baseUrl} did not fully release pid/port state within ${DAEMON_STOP_TIMEOUT_MS}ms.`,
+            "The daemon may have exited while leaving its TCP listener behind; do not treat this as a successful stop.",
           ].join("\n"),
         ),
       );
@@ -1196,6 +1225,25 @@ const runDaemonSession = (input: {
       daemonBaseUrl(daemonHost, input.port),
     );
     const scopeId = currentDaemonScopeId();
+    let requestHttpShutdown: (() => void) | null = null;
+    const waitForDaemonShutdown = Effect.callback<void, never>((resume) => {
+      let completed = false;
+      const shutdown = () => {
+        if (completed) return;
+        completed = true;
+        resume(Effect.void);
+      };
+      requestHttpShutdown = shutdown;
+      process.once("SIGINT", shutdown);
+      process.once("SIGTERM", shutdown);
+      process.once("SIGHUP", shutdown);
+      return Effect.sync(() => {
+        requestHttpShutdown = null;
+        process.off("SIGINT", shutdown);
+        process.off("SIGTERM", shutdown);
+        process.off("SIGHUP", shutdown);
+      });
+    });
 
     try {
       // No process-level startup lock: the DB ownership lock acquired inside
@@ -1260,6 +1308,7 @@ const runDaemonSession = (input: {
         allowedHosts: input.allowedHosts,
         authToken: input.authToken,
         embeddedWebUI,
+        onShutdownRequest: () => requestHttpShutdown?.(),
       });
       if (startResult.kind === "attached") {
         if (shouldEmitDesktopSidecarSentinels()) {
@@ -1303,7 +1352,7 @@ const runDaemonSession = (input: {
         }
         console.log(`Daemon ready on http://${daemonHost}:${daemonPort}`);
 
-        yield* waitForShutdownSignal();
+        yield* waitForDaemonShutdown;
       } finally {
         yield* Effect.promise(() => server.stop());
         yield* removeDaemonRecord({ hostname: daemonHost, port: daemonPort });
@@ -3314,7 +3363,9 @@ const isCallHelpInvocation =
 
 // Kick off the integrations.sh registry fetch on a sidecar runtime — see
 // `./integrations`. Skipped on `-v` (short-circuits earlier).
-fetchIntegrations();
+if (shouldFetchIntegrationsForCliArgs(process.argv)) {
+  fetchIntegrations();
+}
 
 const program = (
   isCallHelpInvocation

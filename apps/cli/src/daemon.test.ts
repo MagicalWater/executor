@@ -6,11 +6,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as Effect from "effect/Effect";
 
+import { isPidAlive } from "./daemon-state";
+
 import {
   canAutoStartLocalDaemonForHost,
+  isDaemonPortReleased,
   isDevCliEntrypoint,
   isExecutorServerReachable,
   planServiceInstall,
+  requestDaemonShutdown,
   spawnDetached,
   terminateSpawnedDetachedProcess,
 } from "./daemon";
@@ -88,8 +92,13 @@ describe("spawnDetached", () => {
         const ready = yield* waitForFile(readyMarker);
         expect(ready).toBe(true);
         yield* terminateSpawnedDetachedProcess(child);
-        const terminated = yield* waitForFile(terminatedMarker);
-        expect(terminated).toBe(true);
+        for (let attempt = 0; attempt < 40 && isPidAlive(child.pid); attempt++) {
+          yield* Effect.promise(() => new Promise((resolve) => setTimeout(resolve, 50)));
+        }
+        expect(isPidAlive(child.pid)).toBe(false);
+        const terminated =
+          process.platform === "win32" ? null : yield* waitForFile(terminatedMarker);
+        expect(terminated).toBe(process.platform === "win32" ? null : true);
       } finally {
         rmSync(workDir, { recursive: true, force: true });
       }
@@ -138,6 +147,83 @@ describe("isExecutorServerReachable", () => {
       });
 
       expect(reachable).toBe(true);
+    }),
+  );
+});
+
+describe("daemon lifecycle probes", () => {
+  it.effect("requests authenticated graceful shutdown", () =>
+    Effect.gen(function* () {
+      const token = "daemon-stop-token";
+      let requested = false;
+      const server = yield* Effect.acquireRelease(
+        Effect.tryPromise(
+          () =>
+            new Promise<{ server: Server; port: number }>((resolve, reject) => {
+              const server = createServer((request, response) => {
+                if (
+                  request.url === "/api/shutdown" &&
+                  request.method === "POST" &&
+                  request.headers.authorization === `Bearer ${token}`
+                ) {
+                  requested = true;
+                  response.writeHead(202);
+                  response.end();
+                  return;
+                }
+                response.writeHead(401);
+                response.end();
+              });
+              server.once("error", reject);
+              server.listen(0, "127.0.0.1", () => {
+                const address = server.address() as AddressInfo;
+                resolve({ server, port: address.port });
+              });
+            }),
+        ),
+        ({ server }) =>
+          Effect.tryPromise(
+            () =>
+              new Promise<void>((resolve) => {
+                server.close(() => resolve());
+              }),
+          ),
+      );
+
+      const accepted = yield* requestDaemonShutdown({
+        baseUrl: `http://127.0.0.1:${server.port}`,
+        authToken: token,
+      });
+      expect(accepted).toBe(true);
+      expect(requested).toBe(true);
+    }),
+  );
+
+  it.effect("does not report localhost released while IPv6 still owns the port", () =>
+    Effect.gen(function* () {
+      const server = yield* Effect.acquireRelease(
+        Effect.tryPromise(
+          () =>
+            new Promise<{ server: Server; port: number }>((resolve, reject) => {
+              const server = createServer();
+              server.once("error", reject);
+              server.listen(0, "::1", () => {
+                const address = server.address() as AddressInfo;
+                resolve({ server, port: address.port });
+              });
+            }),
+        ),
+        ({ server }) =>
+          Effect.tryPromise(
+            () =>
+              new Promise<void>((resolve) => {
+                server.close(() => resolve());
+              }),
+          ),
+      );
+
+      const released = yield* isDaemonPortReleased({ hostname: "localhost", port: server.port });
+      expect(released).toBe(false);
     }),
   );
 });

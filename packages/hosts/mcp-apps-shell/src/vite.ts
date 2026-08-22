@@ -187,6 +187,16 @@ const DEV_HTML_RESOLVED_ID = `\0${DEV_HTML_VIRTUAL_ID}`;
 /** Where `build:shell` writes the self-contained shell document. */
 export const mcpAppsShellHtmlPath = (): string => path.resolve(packageRoot, "dist/mcp-app.html");
 
+const bunRuntimeExecutable = (): string => {
+  if (
+    process.platform === "win32" &&
+    path.basename(process.execPath).toLowerCase() === "bunx.exe"
+  ) {
+    return path.join(path.dirname(process.execPath), "bun.exe");
+  }
+  return process.execPath;
+};
+
 /**
  * Build the shell document and return its bytes.
  *
@@ -208,7 +218,7 @@ export const buildMcpAppsShellHtml = async (): Promise<string> => {
   const { promisify } = await import("node:util");
 
   await promisify(execFile)(
-    process.execPath,
+    bunRuntimeExecutable(),
     [
       path.resolve(packageRoot, "node_modules/vite/bin/vite.js"),
       "build",

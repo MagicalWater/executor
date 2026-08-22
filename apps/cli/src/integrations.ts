@@ -9,6 +9,22 @@ import {
 
 import { USER_AGENT } from "./installation";
 
+const GLOBAL_OPTIONS_WITH_VALUE = new Set(["--completions", "--log-level"]);
+
+export const shouldFetchIntegrationsForCliArgs = (argv: ReadonlyArray<string>): boolean => {
+  for (let index = 2; index < argv.length; index++) {
+    const arg = argv[index];
+    if (GLOBAL_OPTIONS_WITH_VALUE.has(arg)) {
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith("--completions=") || arg.startsWith("--log-level=")) continue;
+    if (arg === "--help" || arg === "-h" || arg === "--version" || arg === "-v") continue;
+    return arg !== "daemon";
+  }
+  return true;
+};
+
 const refreshRegistry = IntegrationsRegistry.asEffect().pipe(
   Effect.flatMap((service) => service.refresh()),
   Effect.asVoid,

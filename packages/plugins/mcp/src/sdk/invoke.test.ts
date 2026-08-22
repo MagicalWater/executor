@@ -142,6 +142,35 @@ const invocationRejectionCases = [
 ];
 
 describe("invokeMcpTool", () => {
+  it.effect("uses the production ten-minute timeout for downstream tool calls", () =>
+    Effect.gen(function* () {
+      let observedOptions: unknown;
+      const connector: McpConnector = Effect.succeed({
+        // oxlint-disable-next-line executor/no-double-cast -- boundary: focused fake records callTool options only
+        client: {
+          setRequestHandler: () => undefined,
+          setNotificationHandler: () => undefined,
+          callTool: (_params: unknown, options: unknown) => {
+            observedOptions = options;
+            return Promise.resolve({ content: [] });
+          },
+        } as unknown as McpConnection["client"],
+        close: () => Promise.resolve(),
+      });
+
+      yield* invokeMcpTool({
+        toolId: "slow_tool",
+        toolName: "slow_tool",
+        args: {},
+        transport: "stdio",
+        connector,
+        elicit: acceptAll,
+      });
+
+      expect(observedOptions).toEqual({ timeout: 10 * 60 * 1_000 });
+    }),
+  );
+
   for (const testCase of invocationRejectionCases) {
     it.effect(testCase.name, () =>
       Effect.gen(function* () {

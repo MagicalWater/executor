@@ -97,6 +97,20 @@ export const isExecutorServerReachable = (
     return response.ok && body.trim() === "ok";
   }).pipe(Effect.catchCause(() => Effect.succeed(false)));
 
+export const requestDaemonShutdown = (input: {
+  readonly baseUrl: string;
+  readonly authToken: string;
+}): Effect.Effect<boolean> =>
+  Effect.tryPromise(async () => {
+    const url = new URL("/api/shutdown", input.baseUrl);
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { authorization: `Bearer ${input.authToken}` },
+      signal: AbortSignal.timeout(2000),
+    });
+    return response.status === 202;
+  }).pipe(Effect.catchCause(() => Effect.succeed(false)));
+
 // ---------------------------------------------------------------------------
 // Process spec
 // ---------------------------------------------------------------------------
@@ -248,9 +262,13 @@ const isPortAvailable = (input: {
           }
         };
 
-        server.once("error", () => {
+        server.once("error", (error: unknown) => {
           cleanup();
-          resolve(false);
+          const code =
+            typeof error === "object" && error !== null && "code" in error
+              ? String(error.code)
+              : null;
+          resolve(code === "EADDRNOTAVAIL");
         });
 
         server.once("listening", () => {
@@ -265,6 +283,20 @@ const isPortAvailable = (input: {
         ? cause
         : new Error(`Failed probing port availability: ${String(cause)}`),
   });
+
+export const isDaemonPortReleased = (input: {
+  hostname: string;
+  port: number;
+}): Effect.Effect<boolean, Error> => {
+  const normalized = input.hostname.trim().toLowerCase();
+  if (normalized === "localhost") {
+    return Effect.all([
+      isPortAvailable({ hostname: "127.0.0.1", port: input.port }),
+      isPortAvailable({ hostname: "::1", port: input.port }),
+    ]).pipe(Effect.map(([ipv4, ipv6]) => ipv4 && ipv6));
+  }
+  return isPortAvailable(input);
+};
 
 const pickEphemeralPort = (hostname: string): Effect.Effect<number, Error> =>
   Effect.tryPromise({

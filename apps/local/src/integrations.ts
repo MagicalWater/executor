@@ -9,17 +9,21 @@ import {
 
 import { USER_AGENT } from "./installation";
 
-// Module-singleton runtime for the integrations.sh registry. The layer's
-// scoped fork fetches the registry at startup and refreshes on a 12-hour
-// cadence for the runtime's lifetime. Shared across every long-running
-// apps/local surface (HTTP server, stdio MCP) so concurrent surfaces don't
-// each spin up their own refresh fork.
-const integrationsRuntime = ManagedRuntime.make(
-  integrationsRegistryLayer({ userAgent: USER_AGENT }).pipe(
-    Layer.provide(FetchHttpClient.layer),
-    Layer.provide(NodeFileSystem.layer),
-  ),
-);
+const makeIntegrationsRuntime = () =>
+  ManagedRuntime.make(
+    integrationsRegistryLayer({ userAgent: USER_AGENT }).pipe(
+      Layer.provide(FetchHttpClient.layer),
+      Layer.provide(NodeFileSystem.layer),
+    ),
+  );
+
+type IntegrationsRuntime = ReturnType<typeof makeIntegrationsRuntime>;
+
+// Shared while at least one long-running apps/local surface is alive. The
+// runtime is recreated after the final release so a later server in the same
+// process can acquire a fresh recurring-refresh scope.
+let integrationsRuntime: IntegrationsRuntime | null = null;
+let integrationsRuntimeConsumers = 0;
 
 /**
  * Idempotently trigger the registry layer to build, which forks the boot
@@ -27,6 +31,18 @@ const integrationsRuntime = ManagedRuntime.make(
  * returns immediately, never throws, never blocks the caller. Failures are
  * absorbed inside the forked fiber and the layer's catchCause handlers.
  */
-export const startIntegrationsRefresh = (): void => {
-  integrationsRuntime.runFork(IntegrationsRegistry.asEffect());
+export const startIntegrationsRefresh = (): (() => Promise<void>) => {
+  const runtime = integrationsRuntime ?? (integrationsRuntime = makeIntegrationsRuntime());
+  integrationsRuntimeConsumers += 1;
+  runtime.runFork(IntegrationsRegistry.asEffect());
+
+  let released = false;
+  return async () => {
+    if (released) return;
+    released = true;
+    integrationsRuntimeConsumers -= 1;
+    if (integrationsRuntimeConsumers !== 0 || integrationsRuntime !== runtime) return;
+    integrationsRuntime = null;
+    await runtime.dispose();
+  };
 };

@@ -264,6 +264,8 @@ export interface StartServerOptions {
   authToken?: string;
   /** Test hook for supplying API/MCP handlers without loading the local server graph. */
   handlers?: ServerHandlers;
+  /** Optional local-daemon lifecycle hook for authenticated graceful shutdown. */
+  onShutdownRequest?: () => void;
 }
 
 export interface ServerInstance {
@@ -340,10 +342,9 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Server
   ]);
   const clientDir = opts.clientDir ?? resolve(import.meta.dirname, "../dist");
 
-  startIntegrationsRefresh();
-
   const ownsHandlers = opts.handlers === undefined;
   const handlers = opts.handlers ?? (await getServerHandlers(authToken));
+  const releaseIntegrationsRefresh = startIntegrationsRefresh();
   let viteChild: ViteChild | null = null;
 
   const disposeOwnedResources = async (): Promise<void> => {
@@ -356,6 +357,7 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Server
     // Final analytics flush; the layer finalizer drains the buffer.
     await disposeAnalytics();
     if (viteChild) await viteChild.stop();
+    await releaseIntegrationsRefresh();
   };
 
   // oxlint-disable-next-line executor/no-try-catch-or-throw -- boundary: after handlers boot, failed static/dev/Bun startup must release DB ownership before surfacing the startup error
@@ -436,6 +438,11 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Server
           );
         }
 
+        if (opts.onShutdownRequest && url.pathname === "/api/shutdown" && req.method === "POST") {
+          setTimeout(() => opts.onShutdownRequest?.(), 0);
+          return withCors(new Response(null, { status: 202 }));
+        }
+
         if (isUnauthenticatedOAuthClientMetadataPath(url.pathname) && req.method === "GET") {
           return withCors(oauthClientMetadataResponse(`${url.pathname}${url.search}`, req));
         }
@@ -511,7 +518,7 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Server
       async stop() {
         if (stopped) return;
         stopped = true;
-        server.stop(true);
+        await server.stop(true);
         await disposeOwnedResources();
       },
     };

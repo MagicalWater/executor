@@ -379,8 +379,6 @@ export const createMcpRequestHandler = (
 // ---------------------------------------------------------------------------
 
 export const runMcpStdioServer = async (config: ExecutorMcpToolConfig): Promise<void> => {
-  startIntegrationsRefresh();
-
   const requestStateSigningKey = crypto.getRandomValues(new Uint8Array(32));
   const stdio = serveStdio(() =>
     Effect.runPromise(
@@ -393,6 +391,7 @@ export const runMcpStdioServer = async (config: ExecutorMcpToolConfig): Promise<
       }),
     ),
   );
+  const releaseIntegrationsRefresh = startIntegrationsRefresh();
 
   const waitForExit = () =>
     new Promise<void>((resolve) => {
@@ -414,5 +413,6 @@ export const runMcpStdioServer = async (config: ExecutorMcpToolConfig): Promise<
     await waitForExit();
   } finally {
     await ignoreClose(() => stdio.close());
+    await releaseIntegrationsRefresh();
   }
 };
