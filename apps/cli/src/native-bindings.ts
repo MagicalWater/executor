@@ -44,15 +44,12 @@ if (
 ) {
   process.env.EXECUTOR_KEYRING_NATIVE_PATH = keyringNodeOnDisk;
 }
-if (
-  typeof Bun !== "undefined" &&
-  process.platform === "darwin" &&
-  existsSync(keyringNodeOnDisk) &&
-  !process.env[KEYRING_HELPER_EXECUTABLE_ENV]
-) {
+if (typeof Bun !== "undefined" && process.platform === "darwin" && existsSync(keyringNodeOnDisk)) {
   // A compiled CLI has the keyring native sidecar next to process.execPath.
   // Re-enter that exact binary in hidden helper mode so synchronous native
-  // Keychain IPC cannot block the daemon's main event loop.
+  // Keychain IPC cannot block the daemon's main event loop. Do not honor an
+  // inherited override here: the helper receives credential values over stdin,
+  // so production must bind it to this exact trusted executable.
   process.env[KEYRING_HELPER_EXECUTABLE_ENV] = process.execPath;
 }
 
