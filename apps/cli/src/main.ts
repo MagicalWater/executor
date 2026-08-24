@@ -1,6 +1,7 @@
 // MUST be first: publishes the colocated libSQL/keyring native `.node` paths
 // before any import (e.g. `@executor-js/local` → libSQL) eagerly loads them.
 import "./native-bindings";
+import "./keyring-helper";
 
 import { randomUUID } from "node:crypto";
 import { existsSync, realpathSync } from "node:fs";

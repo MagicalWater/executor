@@ -17,6 +17,8 @@
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 
+const KEYRING_HELPER_EXECUTABLE_ENV = "EXECUTOR_KEYRING_HELPER_EXECUTABLE";
+
 const execDir = dirname(process.execPath);
 
 // libSQL: our `libsql` patch reads EXECUTOR_LIBSQL_NATIVE_PATH and loads the
@@ -41,6 +43,17 @@ if (
   existsSync(keyringNodeOnDisk)
 ) {
   process.env.EXECUTOR_KEYRING_NATIVE_PATH = keyringNodeOnDisk;
+}
+if (
+  typeof Bun !== "undefined" &&
+  process.platform === "darwin" &&
+  existsSync(keyringNodeOnDisk) &&
+  !process.env[KEYRING_HELPER_EXECUTABLE_ENV]
+) {
+  // A compiled CLI has the keyring native sidecar next to process.execPath.
+  // Re-enter that exact binary in hidden helper mode so synchronous native
+  // Keychain IPC cannot block the daemon's main event loop.
+  process.env[KEYRING_HELPER_EXECUTABLE_ENV] = process.execPath;
 }
 
 const workerdOnDisk = join(execDir, process.platform === "win32" ? "workerd.exe" : "workerd");

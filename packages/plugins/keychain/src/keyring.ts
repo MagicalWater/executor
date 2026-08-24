@@ -1,8 +1,17 @@
 import { createRequire } from "node:module";
+import { spawn } from "node:child_process";
 
 import { Effect } from "effect";
 
 import { KeychainError } from "./errors";
+import {
+  KEYRING_HELPER_ARGUMENT,
+  KEYRING_HELPER_CHILD_ENV,
+  KEYRING_HELPER_EXECUTABLE_ENV,
+  KEYRING_HELPER_TIMEOUT_ENV,
+  type KeyringHelperRequest,
+  type KeyringHelperResponse,
+} from "./helper-protocol";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -84,6 +93,110 @@ const createEntry = (serviceName: string, account: string) =>
     }),
   );
 
+const DEFAULT_HELPER_TIMEOUT_MS = 5_000;
+
+const helperTimeoutMs = (): number => {
+  const raw = Number(process.env[KEYRING_HELPER_TIMEOUT_ENV]);
+  return Number.isFinite(raw) && raw >= 100 && raw <= 30_000 ? raw : DEFAULT_HELPER_TIMEOUT_MS;
+};
+
+const helperExecutable = (): string | null => {
+  const value = process.env[KEYRING_HELPER_EXECUTABLE_ENV]?.trim();
+  return value ? value : null;
+};
+
+const runKeyringHelper = (
+  request: KeyringHelperRequest,
+): Effect.Effect<KeyringHelperResponse, KeychainError> =>
+  Effect.tryPromise({
+    try: () =>
+      new Promise<KeyringHelperResponse>((resolve, reject) => {
+        const executable = helperExecutable();
+        if (!executable) {
+          reject(new Error("Keyring helper executable is unavailable."));
+          return;
+        }
+
+        const child = spawn(executable, [KEYRING_HELPER_ARGUMENT], {
+          stdio: ["pipe", "pipe", "ignore"],
+          env: {
+            ...process.env,
+            [KEYRING_HELPER_CHILD_ENV]: "1",
+          },
+        });
+        let stdout = "";
+        let settled = false;
+        let timedOut = false;
+        const finish = (result: () => void): void => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          result();
+        };
+        const timer = setTimeout(() => {
+          timedOut = true;
+          child.kill("SIGKILL");
+        }, helperTimeoutMs());
+
+        child.stdout.setEncoding("utf8");
+        child.stdout.on("data", (chunk: string) => {
+          stdout += chunk;
+          if (stdout.length > 4 * 1024 * 1024) child.kill("SIGKILL");
+        });
+        child.on("error", (cause) => finish(() => reject(cause)));
+        child.on("close", () =>
+          finish(() => {
+            child.stdin.destroy();
+            child.stdout.destroy();
+            if (timedOut) {
+              reject(new Error(`Keyring helper timed out after ${helperTimeoutMs()} ms.`));
+              return;
+            }
+            try {
+              const parsed = JSON.parse(stdout.trim()) as KeyringHelperResponse;
+              if (!parsed || typeof parsed !== "object" || typeof parsed.ok !== "boolean") {
+                throw new Error("Invalid keyring helper response.");
+              }
+              resolve(parsed);
+            } catch (cause) {
+              reject(cause);
+            }
+          }),
+        );
+
+        child.stdin.end(JSON.stringify(request));
+      }),
+    catch: (cause) =>
+      new KeychainError({
+        message: "Keyring helper failed.",
+        cause,
+      }),
+  });
+
+const helperOrSync = <A>(
+  request: KeyringHelperRequest,
+  fromResponse: (response: KeyringHelperResponse) => A,
+  sync: () => A,
+): Effect.Effect<A, KeychainError> => {
+  if (!helperExecutable()) {
+    return Effect.try({
+      try: sync,
+      catch: (cause) => new KeychainError({ message: "Keyring operation failed.", cause }),
+    });
+  }
+  return runKeyringHelper(request).pipe(
+    Effect.flatMap((response) =>
+      response.ok
+        ? Effect.try({
+            try: () => fromResponse(response),
+            catch: (cause) =>
+              new KeychainError({ message: "Invalid keyring helper response.", cause }),
+          })
+        : Effect.fail(new KeychainError({ message: response.message })),
+    ),
+  );
+};
+
 // ---------------------------------------------------------------------------
 // Low-level keychain operations
 // ---------------------------------------------------------------------------
@@ -91,41 +204,81 @@ const createEntry = (serviceName: string, account: string) =>
 export const getPassword = (
   serviceName: string,
   account: string,
-): Effect.Effect<string | null, KeychainError> =>
-  Effect.flatMap(createEntry(serviceName, account), (entry) =>
+): Effect.Effect<string | null, KeychainError> => {
+  if (helperExecutable()) {
+    return helperOrSync(
+      { operation: "get", serviceName, account },
+      (response) => ("value" in response ? (response.value ?? null) : null),
+      () => null,
+    ).pipe(
+      Effect.mapError(
+        (cause) =>
+          new KeychainError({
+            message: `Failed reading secret for account '${account}'`,
+            cause,
+          }),
+      ),
+    );
+  }
+  return Effect.flatMap(createEntry(serviceName, account), (entry) =>
     Effect.try({
       try: () => entry.getPassword(),
-      catch: () => new KeychainError({ message: `Failed reading secret for account '${account}'` }),
+      catch: (cause) =>
+        new KeychainError({ message: `Failed reading secret for account '${account}'`, cause }),
     }),
   );
+};
 
 export const setPassword = (
   serviceName: string,
   account: string,
   value: string,
-): Effect.Effect<void, KeychainError> =>
-  Effect.flatMap(createEntry(serviceName, account), (entry) =>
+): Effect.Effect<void, KeychainError> => {
+  if (helperExecutable()) {
+    return helperOrSync(
+      { operation: "set", serviceName, account, value },
+      () => undefined,
+      () => undefined,
+    ).pipe(
+      Effect.asVoid,
+      Effect.mapError((cause) => new KeychainError({ message: "Failed writing secret", cause })),
+    );
+  }
+  return Effect.flatMap(createEntry(serviceName, account), (entry) =>
     Effect.try({
       try: () => entry.setPassword(value),
-      catch: (cause) =>
-        new KeychainError({
-          message: "Failed writing secret",
-          cause,
-        }),
+      catch: (cause) => new KeychainError({ message: "Failed writing secret", cause }),
     }).pipe(Effect.asVoid),
   );
+};
 
 export const deletePassword = (
   serviceName: string,
   account: string,
-): Effect.Effect<boolean, KeychainError> =>
-  Effect.flatMap(createEntry(serviceName, account), (entry) =>
+): Effect.Effect<boolean, KeychainError> => {
+  if (helperExecutable()) {
+    return helperOrSync(
+      { operation: "delete", serviceName, account },
+      (response) => ("deleted" in response ? response.deleted === true : true),
+      () => true,
+    ).pipe(
+      Effect.mapError(
+        (cause) =>
+          new KeychainError({
+            message: `Failed deleting secret for account '${account}'`,
+            cause,
+          }),
+      ),
+    );
+  }
+  return Effect.flatMap(createEntry(serviceName, account), (entry) =>
     Effect.try({
       try: () => {
         entry.deletePassword();
         return true;
       },
-      catch: () =>
-        new KeychainError({ message: `Failed deleting secret for account '${account}'` }),
+      catch: (cause) =>
+        new KeychainError({ message: `Failed deleting secret for account '${account}'`, cause }),
     }),
   );
+};
