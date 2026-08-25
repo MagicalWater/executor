@@ -13,11 +13,27 @@ import {
   isDaemonPortReleased,
   isDevCliEntrypoint,
   isExecutorServerReachable,
+  isForegroundDaemonRunArgs,
   planServiceInstall,
   requestDaemonShutdown,
   spawnDetached,
   terminateSpawnedDetachedProcess,
 } from "./daemon";
+
+describe("isForegroundDaemonRunArgs", () => {
+  it("recognizes foreground daemon runs even when global flags come first", () => {
+    expect(isForegroundDaemonRunArgs(["daemon", "run", "--foreground"])).toBe(true);
+    expect(
+      isForegroundDaemonRunArgs(["--log-level", "debug", "daemon", "run", "--foreground"]),
+    ).toBe(true);
+  });
+
+  it("rejects other foreground commands and background daemon runs", () => {
+    expect(isForegroundDaemonRunArgs(["daemon", "run"])).toBe(false);
+    expect(isForegroundDaemonRunArgs(["web", "--foreground"])).toBe(false);
+    expect(isForegroundDaemonRunArgs(["daemon", "restart", "--foreground"])).toBe(false);
+  });
+});
 
 describe("isDevCliEntrypoint", () => {
   it("treats source entrypoints as dev", () => {

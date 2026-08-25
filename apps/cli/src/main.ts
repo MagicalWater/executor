@@ -75,6 +75,7 @@ import type { PlatformError } from "effect/PlatformError";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Cause from "effect/Cause";
+import * as Runtime from "effect/Runtime";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
@@ -114,6 +115,7 @@ import {
   chooseDaemonPort,
   canAutoStartLocalDaemonForHost,
   isDaemonPortReleased,
+  isForegroundDaemonRunArgs,
   isExecutorServerReachable,
   isDevCliEntrypoint,
   parseDaemonBaseUrl,
@@ -3396,4 +3398,14 @@ const program = (
   ),
 );
 
-BunRuntime.runMain(program as Effect.Effect<void, never, never>);
+const isForegroundDaemonRunInvocation = isForegroundDaemonRunArgs(process.argv.slice(2));
+
+BunRuntime.runMain(program as Effect.Effect<void, never, never>, {
+  teardown: (exit, onExit) =>
+    Runtime.defaultTeardown(exit, (code) => {
+      if (isForegroundDaemonRunInvocation && code === 0) {
+        process.exit(0);
+      }
+      onExit(code);
+    }),
+});

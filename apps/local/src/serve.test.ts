@@ -85,6 +85,57 @@ describe("startServer static/SPA routing (unauthenticated)", () => {
 });
 
 describe("startServer startup cleanup", () => {
+  it("aborts an active API request when the server stops", async () => {
+    let markStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    let requestWasAborted = false;
+    const handlers = {
+      ...testHandlers(),
+      api: {
+        dispose: async () => {},
+        handler: async (request: Request) => {
+          markStarted();
+          await new Promise<void>((resolve) => {
+            if (request.signal.aborted) {
+              requestWasAborted = true;
+              resolve();
+              return;
+            }
+            request.signal.addEventListener(
+              "abort",
+              () => {
+                requestWasAborted = true;
+                resolve();
+              },
+              { once: true },
+            );
+          });
+          return new Response("aborted");
+        },
+      },
+    };
+
+    server = await startServer({
+      port: 0,
+      hostname: "127.0.0.1",
+      clientDir,
+      authToken: TOKEN,
+      handlers,
+    });
+    const request = fetch(`http://127.0.0.1:${server.port}/api/active`, {
+      headers: { authorization: `Bearer ${TOKEN}` },
+    }).catch(() => undefined);
+
+    await started;
+    await server.stop();
+    server = null;
+
+    expect(requestWasAborted).toBe(true);
+    await request;
+  });
+
   it("waits for the Bun listener to finish stopping before resolving", async () => {
     const originalServe = Bun.serve;
     const nativeStop = { release: null as (() => void) | null };

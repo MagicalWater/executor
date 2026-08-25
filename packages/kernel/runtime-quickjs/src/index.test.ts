@@ -1,6 +1,8 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Data from "effect/Data";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 
 import type { SandboxToolInvoker } from "@executor-js/codemode-core";
 import { makeQuickJsExecutor } from "./index";
@@ -27,6 +29,27 @@ const makeTestInvoker = (
 const executor = makeQuickJsExecutor({ timeoutMs: 5_000 });
 
 describe("quickjs executor", () => {
+  it.effect("interrupts an in-flight host tool invocation when execution is interrupted", () =>
+    Effect.gen(function* () {
+      const started = yield* Deferred.make<void>();
+      const interrupted = yield* Deferred.make<void>();
+      const invoker: SandboxToolInvoker = {
+        invoke: () =>
+          Effect.gen(function* () {
+            yield* Deferred.succeed(started, undefined);
+            return yield* Effect.never;
+          }).pipe(Effect.onInterrupt(() => Deferred.succeed(interrupted, undefined))),
+      };
+
+      const fiber = yield* Effect.forkChild(
+        executor.execute("return await tools.slow.wait({});", invoker),
+      );
+      yield* Deferred.await(started);
+      yield* Fiber.interrupt(fiber);
+      yield* Deferred.await(interrupted);
+    }),
+  );
+
   it.effect("runs plain code", () =>
     Effect.gen(function* () {
       const result = yield* executor.execute(`return 1 + 2`, makeTestInvoker({}));

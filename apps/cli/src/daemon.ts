@@ -21,6 +21,11 @@ export interface SpawnedDetachedProcess {
   readonly pid: number;
 }
 
+export const isForegroundDaemonRunArgs = (args: ReadonlyArray<string>): boolean => {
+  const daemonIndex = args.findIndex((arg) => arg === "daemon");
+  return daemonIndex >= 0 && args[daemonIndex + 1] === "run" && args.includes("--foreground");
+};
+
 export interface ExecutorServerReachabilityInput {
   readonly baseUrl: string;
 }

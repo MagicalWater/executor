@@ -596,7 +596,9 @@ export const createExecutionEngine = <E extends Cause.YieldableError = CodeExecu
       ),
     );
 
-    return (yield* awaitCompletionOrPause(fiber, pauseQueue)) as ExecutionResult;
+    return (yield* awaitCompletionOrPause(fiber, pauseQueue).pipe(
+      Effect.onInterrupt(() => Fiber.interrupt(fiber)),
+    )) as ExecutionResult;
   });
 
   /**

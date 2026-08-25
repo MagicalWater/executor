@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Predicate } from "effect";
+import { Effect, Fiber, Predicate } from "effect";
 import { HttpServerResponse } from "effect/unstable/http";
 
 import {
@@ -167,7 +167,52 @@ describe("invokeMcpTool", () => {
         elicit: acceptAll,
       });
 
-      expect(observedOptions).toEqual({ timeout: 10 * 60 * 1_000 });
+      expect(observedOptions).toMatchObject({ timeout: 10 * 60 * 1_000 });
+      expect((observedOptions as { signal?: AbortSignal }).signal).toBeInstanceOf(AbortSignal);
+    }),
+  );
+
+  it.effect("aborts the downstream MCP request when the invocation fiber is interrupted", () =>
+    Effect.gen(function* () {
+      let observedSignal: AbortSignal | undefined;
+      let markStarted!: () => void;
+      const started = new Promise<void>((resolve) => {
+        markStarted = resolve;
+      });
+      const connector: McpConnector = Effect.succeed({
+        // oxlint-disable-next-line executor/no-double-cast -- boundary: focused fake observes cancellation only
+        client: {
+          setRequestHandler: () => undefined,
+          setNotificationHandler: () => undefined,
+          callTool: (_params: unknown, options: { signal?: AbortSignal }) => {
+            observedSignal = options.signal;
+            markStarted();
+            return new Promise<{ content: never[] }>((resolve) => {
+              options.signal?.addEventListener("abort", () => resolve({ content: [] }), {
+                once: true,
+              });
+            });
+          },
+        } as unknown as McpConnection["client"],
+        close: () => Promise.resolve(),
+      });
+
+      const fiber = yield* Effect.forkChild(
+        invokeMcpTool({
+          toolId: "cancellable_tool",
+          toolName: "cancellable_tool",
+          args: {},
+          transport: "stdio",
+          connector,
+          elicit: acceptAll,
+        }),
+      );
+      yield* Effect.promise(() => started);
+
+      expect(observedSignal).toBeInstanceOf(AbortSignal);
+      expect(observedSignal?.aborted).toBe(false);
+      yield* Fiber.interrupt(fiber);
+      expect(observedSignal?.aborted).toBe(true);
     }),
   );
 

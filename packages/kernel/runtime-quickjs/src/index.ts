@@ -308,6 +308,7 @@ const createToolBridge = (
   pendingDeferreds: Set<QuickJSDeferredPromise>,
   runPromise: RunPromise,
   deadline: DeadlineTracker,
+  signal: AbortSignal,
 ): QuickJSHandle =>
   context.newFunction("__executor_invokeTool", (pathHandle, argsHandle) => {
     const path = context.getString(pathHandle);
@@ -342,6 +343,13 @@ const createToolBridge = (
       (cause) => {
         deadline.dispatchReturned();
         if (!deferred.alive) {
+          return;
+        }
+
+        if (signal.aborted) {
+          const errorHandle = context.newError("Execution interrupted.");
+          deferred.reject(errorHandle);
+          errorHandle.dispose();
           return;
         }
 
@@ -439,6 +447,7 @@ const evaluateInQuickJs = async (
   code: string,
   toolInvoker: SandboxToolInvoker,
   runPromise: RunPromise,
+  signal: AbortSignal,
 ): Promise<ExecuteResult> => {
   const timeoutMs = Math.max(100, options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
   const deadline = makeDeadlineTracker(timeoutMs);
@@ -465,6 +474,7 @@ const evaluateInQuickJs = async (
         pendingDeferreds,
         runPromise,
         deadline,
+        signal,
       );
       context.setProp(context.global, "__executor_invokeTool", toolBridge);
       toolBridge.dispose();
@@ -554,9 +564,12 @@ const runInQuickJs = (
 ): Effect.Effect<ExecuteResult, QuickJsExecutionError> =>
   Effect.gen(function* () {
     const context = yield* Effect.context<never>();
-    const runPromise = Effect.runPromiseWith(context);
     return yield* Effect.tryPromise({
-      try: () => evaluateInQuickJs(options, code, toolInvoker, runPromise),
+      try: (signal) => {
+        const runPromise: RunPromise = (effect) =>
+          Effect.runPromiseWith(context)(effect, { signal });
+        return evaluateInQuickJs(options, code, toolInvoker, runPromise, signal);
+      },
       catch: (cause) => new QuickJsExecutionError({ message: String(cause) }),
     });
   }).pipe(

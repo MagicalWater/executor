@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Data, Effect, Exit } from "effect";
+import { Data, Deferred, Effect, Exit } from "effect";
 
 import { createExecutor, definePlugin } from "@executor-js/sdk";
 import { makeTestConfig } from "@executor-js/sdk/testing";
@@ -37,6 +37,37 @@ const emptyPlugin = definePlugin(() => ({
 const makeExecutor = () => createExecutor(makeTestConfig({ plugins: [emptyPlugin()] as const }));
 
 describe("executeWithPause failure propagation", () => {
+  it.effect("interrupts an unfinished detached sandbox when its caller is interrupted", () =>
+    Effect.gen(function* () {
+      const executor = yield* makeExecutor();
+      const started = yield* Deferred.make<void>();
+      const interrupted = yield* Deferred.make<void>();
+      const hangingExecutor: CodeExecutor<FakeRuntimeError> = {
+        execute: () =>
+          Effect.gen(function* () {
+            yield* Deferred.succeed(started, undefined);
+            yield* Effect.sleep("250 millis");
+            return { result: "finished", logs: [] } satisfies ExecuteResult;
+          }).pipe(Effect.onInterrupt(() => Deferred.succeed(interrupted, undefined))),
+      };
+      const engine = createExecutionEngine({ executor, codeExecutor: hangingExecutor });
+
+      const caller = yield* Effect.forkDetach(engine.executeWithPause("noop"));
+      const sandboxStarted = yield* Effect.race(
+        Deferred.await(started).pipe(Effect.as(true)),
+        Effect.sleep("200 millis").pipe(Effect.as(false)),
+      );
+      expect(sandboxStarted).toBe(true);
+      caller.interruptUnsafe();
+
+      const sandboxInterrupted = yield* Effect.race(
+        Deferred.await(interrupted).pipe(Effect.as(true)),
+        Effect.sleep("200 millis").pipe(Effect.as(false)),
+      );
+      expect(sandboxInterrupted).toBe(true);
+    }),
+  );
+
   it.effect("surfaces a fast codeExecutor failure as an Exit.Failure", () =>
     Effect.gen(function* () {
       const executor = yield* makeExecutor();

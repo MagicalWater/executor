@@ -180,10 +180,10 @@ const useConnection = (
     installElicitationHandler(connection.client, elicit);
     installToolListChangedHandler(connection.client, onToolListChanged);
     return yield* Effect.tryPromise({
-      try: () =>
+      try: (signal) =>
         connection.client.callTool(
           { name: toolName, arguments: args },
-          { timeout: MCP_TOOL_CALL_TIMEOUT_MS },
+          { timeout: MCP_TOOL_CALL_TIMEOUT_MS, signal },
         ),
       catch: (cause) => {
         if (Predicate.isTagged(cause, "McpOAuthReauthorizationRequired")) {
