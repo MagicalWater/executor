@@ -284,10 +284,11 @@ export type ResumeFallbackOutcome =
       readonly status: "execution_not_found";
     };
 
-/** Request identity normalized from an MCP SDK callback context. */
+/** Request identity/lifecycle normalized from an MCP SDK callback context. */
 export type McpRequestJoinKeys = {
   readonly requestId: string | number;
   readonly sessionId?: string | undefined;
+  readonly signal: AbortSignal;
 };
 
 /** 2026-07-28 input-required result returned by the MCP assembly. */
@@ -1139,11 +1140,15 @@ export const buildExecutorMcpTools = <
       const parent = resolveParentSpan();
       return parent ? Effect.withParentSpan(effect, parent) : effect;
     };
-    const runToolEffect = <EffE>(effect: Effect.Effect<McpHandlerResult, EffE>) =>
+    const runToolEffect = <EffE>(
+      effect: Effect.Effect<McpHandlerResult, EffE>,
+      requestContext: RequestContext,
+    ) =>
       Effect.runPromiseWith(context)(
         anchor(effect).pipe(
           Effect.catchCause((cause) => Effect.succeed(toMcpFailureResult(cause))),
         ),
+        { signal: requestContext.signal },
       );
 
     const assembly = yield* Effect.sync(createAssembly);
@@ -1479,7 +1484,7 @@ export const buildExecutorMcpTools = <
           description,
           inputSchema: { code: z.string().trim().min(1) },
         },
-        ({ code }, extra) => runToolEffect(executeCode(code, extra)),
+        ({ code }, extra) => runToolEffect(executeCode(code, extra), extra),
       ),
     );
 
@@ -1499,8 +1504,8 @@ export const buildExecutorMcpTools = <
               .describe('The skill to fetch, e.g. "execute". Omit to list available skills.'),
           },
         },
-        ({ name }) =>
-          runToolEffect(Effect.succeed(skillsResult(name, executeInventory, skillCatalog))),
+        ({ name }, extra) =>
+          runToolEffect(Effect.succeed(skillsResult(name, executeInventory, skillCatalog)), extra),
       ),
     );
 
@@ -1531,6 +1536,7 @@ export const buildExecutorMcpTools = <
           ({ executionId, action, content: rawContent }, extra) =>
             runToolEffect(
               resumeExecution(executionId, action, parseJsonContent(rawContent), extra),
+              extra,
             ),
         );
       }
@@ -1547,7 +1553,8 @@ export const buildExecutorMcpTools = <
             executionId: z.string().describe("The execution ID from the paused result"),
           },
         },
-        ({ executionId }, extra) => runToolEffect(resumeAfterBrowserApproval(executionId, extra)),
+        ({ executionId }, extra) =>
+          runToolEffect(resumeAfterBrowserApproval(executionId, extra), extra),
       );
     });
 
@@ -1981,8 +1988,11 @@ export const buildExecutorMcpTools = <
               ui: { resourceUri: MCP_APPS_SHELL_RESOURCE_URI, visibility: ["model"] },
             },
           },
-          ({ code, title, description, connections, artifactId }) =>
-            runToolEffect(createArtifact({ code, title, description, connections, artifactId })),
+          ({ code, title, description, connections, artifactId }, extra) =>
+            runToolEffect(
+              createArtifact({ code, title, description, connections, artifactId }),
+              extra,
+            ),
         ),
       );
 
@@ -2042,8 +2052,11 @@ export const buildExecutorMcpTools = <
               ui: { resourceUri: MCP_APPS_SHELL_RESOURCE_URI, visibility: ["model"] },
             },
           },
-          ({ artifactId, edits, connections, title, description }) =>
-            runToolEffect(editArtifact({ artifactId, edits, connections, title, description })),
+          ({ artifactId, edits, connections, title, description }, extra) =>
+            runToolEffect(
+              editArtifact({ artifactId, edits, connections, title, description }),
+              extra,
+            ),
         ),
       );
 
@@ -2057,7 +2070,7 @@ export const buildExecutorMcpTools = <
             ].join("\n"),
             inputSchema: {},
           },
-          () => runToolEffect(listArtifacts()),
+          (_args, extra) => runToolEffect(listArtifacts(), extra),
         ),
       );
 
@@ -2077,7 +2090,7 @@ export const buildExecutorMcpTools = <
               ui: { resourceUri: MCP_APPS_SHELL_RESOURCE_URI, visibility: ["model"] },
             },
           },
-          ({ id }) => runToolEffect(showArtifact(id)),
+          ({ id }, extra) => runToolEffect(showArtifact(id), extra),
         ),
       );
 
@@ -2103,7 +2116,7 @@ export const buildExecutorMcpTools = <
             },
           },
           ({ code, artifactId }, extra) =>
-            runToolEffect(executeCodeFromApp(code, artifactId, extra)),
+            runToolEffect(executeCodeFromApp(code, artifactId, extra), extra),
         );
 
         executeActionResumeTool = assembly.registerAppTool(
@@ -2127,6 +2140,7 @@ export const buildExecutorMcpTools = <
           ({ executionId, action, content: rawContent }, extra) =>
             runToolEffect(
               resumeExecution(executionId, action, parseJsonContent(rawContent), extra),
+              extra,
             ),
         );
       });

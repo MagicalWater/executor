@@ -1685,6 +1685,38 @@ describe("clientInfoFromRequestBody", () => {
 });
 
 describe("MCP host server — hang-visibility tracing", () => {
+  it("interrupts execute when the MCP caller cancels the request", async () => {
+    let markStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    let interrupted = false;
+    const engine = makeStubEngine({
+      executeWithPause: () =>
+        Effect.sync(markStarted).pipe(
+          Effect.andThen(Effect.never),
+          Effect.ensuring(
+            Effect.sync(() => {
+              interrupted = true;
+            }),
+          ),
+        ),
+    });
+
+    await withClient(engine, NO_CAPS, async (client) => {
+      const controller = new AbortController();
+      const call = client.callTool(
+        { name: "execute", arguments: { code: "hang" } },
+        { signal: controller.signal, timeout: 5_000 },
+      );
+      await started;
+      controller.abort();
+      await expect(call).rejects.toBeDefined();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(interrupted).toBe(true);
+    });
+  });
+
   it("execute emits a start marker and stamps the JSON-RPC id on execution spans", async () => {
     const engine = makeStubEngine({});
 
