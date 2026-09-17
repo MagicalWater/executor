@@ -327,6 +327,7 @@ export const clientCapabilitiesFromRequest = (
 const requestJoinKeys = (context: ServerContext): McpServerRequestContext => ({
   requestId: context.mcpReq.id,
   ...(context.sessionId === undefined ? {} : { sessionId: context.sessionId }),
+  signal: context.mcpReq.signal,
   serverContext: context,
 });
 
